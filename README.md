@@ -50,76 +50,311 @@ Cron Trigger ──> Worker ──> 获授权的 esim.gg 会话
 
 ## 部署
 
-需要 Node.js 20+、Cloudflare 账户、一个 Resend 账户，以及已在 Resend 验证的发件域名。
+下面是从空 Cloudflare 账户开始的完整流程。相关官方文档：[Wrangler](https://developers.cloudflare.com/workers/wrangler/)、[D1 命令](https://developers.cloudflare.com/d1/wrangler-commands/)、[Worker Secrets](https://developers.cloudflare.com/workers/configuration/secrets/) 和 [Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)。
 
-1. 安装依赖并创建本机 Wrangler 配置：
+### 0. 准备条件
 
-   ```bash
-   npm install
-   cp wrangler.example.jsonc wrangler.jsonc
-   ```
+必须准备：
 
-2. 创建 D1 数据库：
+- Node.js 20 或更高版本；
+- Git；
+- Cloudflare 账户；
+- 一个由你本人正常登录、且允许你使用的 esim.gg 账号。
 
-   ```bash
-   npx wrangler d1 create freesim-watch
-   ```
+按需准备：
 
-   将输出的 `database_id` 写入本机 `wrangler.jsonc`。该文件已被 Git 忽略，避免把账号 ID、域名和管理员 ID 提交到公开仓库。
+- 个人自用：密码管理器生成的随机站点 Token；
+- 多用户：LinuxDo 账号及 [LinuxDo Connect](https://connect.linux.do/) 应用；
+- 邮件通知：Resend 账户、API Key 和已验证的发件域名；
+- 自定义域名：域名必须已经接入当前 Cloudflare 账户。
 
-3. 初始化远程数据库：
+先确认本机版本：
 
-   ```bash
-   npx wrangler d1 execute freesim-watch --remote --file=schema.sql
-   npx wrangler d1 execute freesim-watch --remote --file=scripts/baseline-migrations.sql
-   ```
+```bash
+node --version
+npm --version
+git --version
+```
 
-   第二条命令只登记当前仓库已经包含在 `schema.sql` 中的历史迁移，之后新增迁移即可使用 `npx wrangler d1 migrations apply freesim-watch --remote`。
+### 1. 下载代码并安装依赖
 
-4. 修改 `wrangler.jsonc` 中的 `PUBLIC_ORIGIN`、可选自定义域名和 `MAX_REGISTERED_USERS`。如果使用 LinuxDo 多用户登录，再填写 `ADMIN_USER_IDS`；多个 ID 使用逗号分隔。
+```bash
+git clone https://github.com/mibgb65-cloud/FreeSIM-Watch.git
+cd FreeSIM-Watch
+npm install
+```
 
-5. 至少配置一种正式登录方式：
+如果已经 clone 过仓库，使用 `git pull --ff-only` 更新即可。
 
-   个人自托管建议使用随机站点 Token，无需配置 LinuxDo。用密码管理器生成 32–256 个字符的随机值，然后写入 Worker Secret：
+### 2. 登录正确的 Cloudflare 账户
 
-   ```bash
-   npx wrangler secret put ADMIN_TOKEN
-   ```
+```bash
+npx wrangler login
+npx wrangler whoami
+```
 
-   `ADMIN_TOKEN` 不要写入 `wrangler.jsonc`、README、Issue 或 Git；登录成功后浏览器只保存 HttpOnly Session Cookie，不保存原始 Token。删除或清空该 Secret 会立即停用现有站点 Token 会话。
+`whoami` 显示的邮箱和 Account ID 必须属于准备部署 Worker、D1 和域名的账户。登录错误时执行：
 
-   如需多用户登录，则在 [LinuxDo Connect](https://connect.linux.do/) 创建应用，回调地址填写：
+```bash
+npx wrangler logout
+npx wrangler login
+```
+
+远程服务器或无桌面环境可以使用 `npx wrangler login --device`。
+
+### 3. 创建本机 Wrangler 配置
+
+`wrangler.jsonc` 包含实例域名、D1 ID 和管理员 ID，已被 `.gitignore` 忽略。不要修改并提交 `wrangler.example.jsonc` 来保存自己的生产配置。
+
+macOS / Linux：
+
+```bash
+cp wrangler.example.jsonc wrangler.jsonc
+```
+
+Windows PowerShell：
+
+```powershell
+Copy-Item wrangler.example.jsonc wrangler.jsonc
+```
+
+### 4. 创建并绑定 D1
+
+```bash
+npx wrangler d1 create freesim-watch
+```
+
+命令会返回一个 UUID 形式的 `database_id`。打开本机 `wrangler.jsonc`，替换：
+
+```jsonc
+"database_id": "REPLACE_WITH_D1_DATABASE_ID"
+```
+
+确认绑定名保持为 `DB`，数据库名称保持与上面创建的名称一致：
+
+```jsonc
+"d1_databases": [
+  {
+    "binding": "DB",
+    "database_name": "freesim-watch",
+    "database_id": "这里填写刚才返回的 UUID"
+  }
+]
+```
+
+如果你修改了数据库名称，后续所有 D1 命令也要使用同一个名称。
+
+### 5. 选择访问地址并修改 `PUBLIC_ORIGIN`
+
+`PUBLIC_ORIGIN` 必须是用户最终访问的完整源地址，协议、主机名和端口必须完全一致，且不要带路径。
+
+#### 方案 A：使用 `workers.dev`
+
+保留：
+
+```jsonc
+"workers_dev": true
+```
+
+在 Cloudflare Dashboard 的 Workers & Pages 中确认自己的 `workers.dev` 子域，然后设置：
+
+```jsonc
+"PUBLIC_ORIGIN": "https://freesim-watch.你的子域.workers.dev"
+```
+
+如果首次部署输出的地址不同，以 Wrangler 输出为准，修正 `PUBLIC_ORIGIN` 后重新部署。
+
+#### 方案 B：使用自定义域名
+
+推荐生产实例使用 Custom Domain。把 `watch.example.com` 替换为自己的域名：
+
+```jsonc
+"workers_dev": false,
+"routes": [
+  {
+    "pattern": "watch.example.com",
+    "custom_domain": true
+  }
+],
+"vars": {
+  "PUBLIC_ORIGIN": "https://watch.example.com"
+}
+```
+
+该 hostname 必须位于当前 Cloudflare 账户的有效 Zone 中，也不能已存在冲突的 CNAME。Cloudflare 会为 Custom Domain 创建 DNS 记录并签发证书。
+
+其余常用变量：
+
+| 变量 | 用途 | 建议 |
+| --- | --- | --- |
+| `MAX_MONITORS_PER_USER` | 每位用户默认最多创建的任务数 | 个人部署可保持 `3` |
+| `MAX_REGISTERED_USERS` | 总注册用户上限 | 个人 Token 登录可设为 `1` |
+| `ADMIN_USER_IDS` | LinuxDo 管理员数字 ID，逗号分隔 | 不使用 LinuxDo 时留空 |
+| `LEGACY_OWNER_USER_ID` | 旧单用户数据迁移目标 | 新部署留空 |
+
+`LINUXDO_AUTHORIZE_URL`、`LINUXDO_TOKEN_URL` 和 `LINUXDO_USER_URL` 已提供默认值，一般不需要修改。
+
+### 6. 初始化远程数据库
+
+仅在全新 D1 上执行以下两条命令：
+
+```bash
+npx wrangler d1 execute freesim-watch --remote --file=schema.sql
+npx wrangler d1 execute freesim-watch --remote --file=scripts/baseline-migrations.sql
+```
+
+- `schema.sql` 创建当前版本所需的完整表和索引；
+- `baseline-migrations.sql` 只登记已经包含在 schema 中的历史迁移，避免后续升级重复执行。
+
+检查表是否已创建：
+
+```bash
+npx wrangler d1 execute freesim-watch --remote --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
+```
+
+不要在已有数据的数据库上重复导入备份或旧 schema。后续版本升级使用 migrations，见下方“更新与升级”。
+
+### 7. 验证并首次部署 Worker
+
+```bash
+npm run verify
+npm run deploy
+```
+
+`npm run deploy` 会先构建 Vue，再运行 `wrangler deploy` 上传 Worker 和静态资源。部署输出应显示：
+
+- D1 绑定：`env.DB (freesim-watch)`；
+- Assets 绑定：`env.ASSETS`；
+- Cron：`schedule: * * * * *`；
+- 最终的 Worker URL 或 Custom Domain；
+- Current Version ID。
+
+第一次部署时没有登录 Secret 也没关系，登录页只会提示尚未配置可用登录方式。
+
+### 8. 配置加密主密钥
+
+所有部署都必须配置 `SESSION_ENCRYPTION_KEY`。项目脚本会生成 32 字节 AES-GCM 密钥并直接上传，不在终端显示密钥值：
+
+```bash
+npm run security:key
+```
+
+请勿随意轮换此密钥。轮换后，已经加密保存的 esim.gg Session 和后台托管的 Resend Key 都需要重新录入。
+
+### 9. 至少配置一种登录方式
+
+#### 方式 A：个人自用的站点 Token（推荐）
+
+用密码管理器生成并保存一个 32–256 字符的随机值，然后运行：
+
+```bash
+npx wrangler secret put ADMIN_TOKEN
+```
+
+在 Wrangler 提示中粘贴 Token。`ADMIN_TOKEN` 只能放在 Worker Secret 中，不能写入 `wrangler.jsonc`、README、Issue、截图或 Git。
+
+站点 Token 登录后会使用固定的自托管管理员身份。浏览器只保存随机 HttpOnly Session Cookie；原始 Token 不会写入 D1、Cookie、localStorage 或日志。删除该 Secret 会停用已有的站点 Token 会话：
+
+```bash
+npx wrangler secret delete ADMIN_TOKEN
+```
+
+#### 方式 B：LinuxDo OAuth 多用户登录
+
+1. 打开 [LinuxDo Connect](https://connect.linux.do/) 创建 OAuth 应用。
+2. 回调地址必须与 `PUBLIC_ORIGIN` 对应：
 
    ```text
    https://你的正式域名/auth/linuxdo/callback
    ```
 
-   然后配置：
+3. 将你自己的 LinuxDo 数字用户 ID 写入本机 `wrangler.jsonc` 的 `ADMIN_USER_IDS`。多个管理员使用英文逗号分隔。
+4. 上传 OAuth 凭据：
 
    ```bash
    npx wrangler secret put LINUXDO_CLIENT_ID
    npx wrangler secret put LINUXDO_CLIENT_SECRET
    ```
 
-   两种登录方式可以同时开启。之后配置所有部署都需要的加密密钥，以及可选的默认 Resend 发件配置：
+只有 Client ID 和 Client Secret 都配置正确时 OAuth 登录才能完成。登录页只公开“是否已配置”，不会返回 Secret 值。
 
-   ```bash
-   npm run security:key
-   npx wrangler secret put RESEND_API_KEY
-   npx wrangler secret put RESEND_FROM
-   ```
+两种登录方式可以同时开启。个人部署只配置 `ADMIN_TOKEN` 时，不需要创建 LinuxDo 应用，也不需要设置 `ADMIN_USER_IDS`。
 
-   `security:key` 会生成并上传 32 字节 AES-GCM 主密钥，不显示密钥值。`RESEND_FROM` 示例：`FreeSIM Watch <alerts@example.com>`。
+### 10. 配置邮件通知
 
-6. 部署：
+邮件通知需要 Resend API Key 和已验证的发件域名。可以任选一种方式：
 
-   ```bash
-   npm run deploy
-   ```
+#### 方式 A：使用 Worker Secret
 
-部署命令会先构建 Vue 管理台，再上传 Worker 和 `dist` 静态资源。打开 Worker URL，使用已配置的 LinuxDo 或站点 Token 登录。
+```bash
+npx wrangler secret put RESEND_API_KEY
+npx wrangler secret put RESEND_FROM
+```
 
-从 `0.1.0` 的早期监控-only 版本升级时，执行：
+`RESEND_FROM` 示例：
+
+```text
+FreeSIM Watch <alerts@example.com>
+```
+
+其中 `example.com` 必须已在 Resend 验证。
+
+#### 方式 B：登录管理员后台添加
+
+先完成登录，再进入“管理 → Resend Keys”，填写已验证的发件域名和 API Key。Key 会使用 `SESSION_ENCRYPTION_KEY` 做 AES-GCM 加密，页面只显示末四位。
+
+不配置 Resend 时仍可部署和登录，但邮件通知会失败。
+
+### 11. 最终部署与上线检查
+
+Secret 修改会创建新的 Worker 版本。全部配置完成后再执行一次：
+
+```bash
+npm run verify
+npm run deploy
+npx wrangler secret list
+```
+
+`secret list` 只显示 Secret 名称，不会显示值。然后检查健康接口：
+
+```bash
+curl https://你的正式域名/health
+```
+
+预期响应：
+
+```json
+{"ok":true,"service":"freesim-watch"}
+```
+
+最后在浏览器完成：
+
+1. 打开 `/login`，使用站点 Token 或 LinuxDo 登录；
+2. 进入“配置”，绑定自己的 esim.gg 会话；
+3. 创建监控任务并填写通知邮箱；
+4. 先点击“立即检查”确认查询正常；
+5. 确认 Worker 部署输出中已注册每分钟 Cron。
+
+### 更新与升级
+
+更新前建议先备份远程 D1。备份文件已被 `.gitignore` 的 `backup*.sql` 规则忽略，但仍不要上传或分享：
+
+```bash
+npx wrangler d1 export freesim-watch --remote --output=backup-before-upgrade.sql
+git pull --ff-only
+npm install
+npx wrangler d1 migrations list freesim-watch --remote
+npx wrangler d1 migrations apply freesim-watch --remote
+npm run verify
+npm run deploy
+```
+
+普通代码更新不需要重新设置 Secret。只有主动删除、轮换或更换 Worker 名称/环境时才需要重新检查 Secret。
+
+<details>
+<summary>从早期 monitoring-only 版本升级</summary>
+
+早期版本没有迁移追踪记录时，按顺序执行：
 
 ```bash
 npx wrangler d1 execute freesim-watch --remote --file=migrations/0002_orders.sql
@@ -137,6 +372,45 @@ npx wrangler d1 execute freesim-watch --remote --file=migrations/0013_app_settin
 npx wrangler d1 execute freesim-watch --remote --file=migrations/0014_user_bans.sql
 npx wrangler d1 execute freesim-watch --remote --file=scripts/baseline-migrations.sql
 ```
+
+</details>
+
+### 常见部署问题
+
+| 现象 | 检查项 |
+| --- | --- |
+| Wrangler 部署到了错误账户 | 运行 `npx wrangler whoami`；必要时 logout 后重新 login |
+| `no such table` | 确认 `database_id` 正确，并重新检查“初始化远程数据库”步骤 |
+| 登录页没有站点 Token | `ADMIN_TOKEN` 必须是 32–256 字符，并通过 `wrangler secret put` 上传 |
+| LinuxDo 回调失败 | OAuth 回调地址必须精确等于 `PUBLIC_ORIGIN + /auth/linuxdo/callback` |
+| 页面持续 308 跳转 | `PUBLIC_ORIGIN` 与实际访问的协议和 hostname 不一致 |
+| Custom Domain 创建失败 | hostname 不在当前账户 Zone，或已有冲突 CNAME |
+| 能登录但不能保存 esim.gg 会话 | 检查 `SESSION_ENCRYPTION_KEY` 是否存在，确认 D1 使用正确数据库 |
+| 邮件发送失败 | 检查 Resend 域名验证、API Key、发件人和后台错误摘要 |
+| 定时任务不运行 | 检查部署输出是否包含 `schedule: * * * * *`，并查看 Worker 日志 |
+
+查看实时日志：
+
+```bash
+npx wrangler tail
+```
+
+### 部署安全检查
+
+发布或提交前运行：
+
+```bash
+git status --short --ignored
+npx wrangler secret list
+```
+
+以下文件或内容绝不能提交到公开仓库：
+
+- `.dev.vars`、`.env*`、`wrangler.jsonc`；
+- D1 导出、数据库文件和备份 SQL；
+- `ADMIN_TOKEN`、LinuxDo Client Secret、Resend API Key；
+- `SESSION_ENCRYPTION_KEY`、esim.gg Cookie/Session；
+- `.wrangler/`、浏览器登录 Profile 和调试抓包。
 
 ## 本地开发
 
@@ -299,6 +573,10 @@ npm run build
 ## 参与贡献与安全报告
 
 提交 Pull Request 前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题请按照 [SECURITY.md](SECURITY.md) 私下报告，不要在公开 Issue 中粘贴 Cookie、OAuth Secret、Resend Key 或加密密钥。
+
+## 友情链接
+
+- [LinuxDo 社区](https://linux.do/) — 一个开放、友善的技术交流社区；本项目支持使用 LinuxDo Connect 作为可选的多用户登录方式。
 
 ## License
 
