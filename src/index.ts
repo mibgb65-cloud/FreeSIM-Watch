@@ -1,10 +1,13 @@
 import {
+  adminTokenConfigured,
   beginLinuxDoAuth,
+  createAdminTokenSession,
   createDevSession,
   currentUser,
   destroySession,
   finishLinuxDoAuth,
   oauthStateCookie,
+  safeReturnTo,
   sessionCookie,
 } from "./auth.js";
 import type { Env, SessionUser } from "./env.js";
@@ -64,6 +67,7 @@ type OrderActionConfig = {
   headers?: Record<string, string>;
   bodyTemplate: string;
   rechargeAmount?: number;
+  coupon?: string;
   paymentUrlPath: string;
   orderIdPath?: string;
   totalPath?: string;
@@ -151,6 +155,7 @@ type NumberRankingInput = {
 type ManualOrderInput = {
   number?: unknown;
   expectedPrice?: unknown;
+  coupon?: unknown;
   acknowledged?: unknown;
 };
 
@@ -196,7 +201,11 @@ export default {
     }
 
     if (request.method === "GET" && url.pathname === "/api/auth/config") {
-      return json({ linuxDoConfigured: Boolean(env.LINUXDO_CLIENT_ID), devLoginEnabled: env.DEV_LOGIN_ENABLED === "true" });
+      return json({
+        linuxDoConfigured: Boolean(env.LINUXDO_CLIENT_ID),
+        tokenLoginConfigured: adminTokenConfigured(env.ADMIN_TOKEN),
+        devLoginEnabled: isLocalDevelopmentRequest(url, env),
+      });
     }
 
     if (request.method === "GET" && url.pathname === "/api/session") {
@@ -225,8 +234,27 @@ export default {
       }
     }
 
+    if (request.method === "POST" && url.pathname === "/auth/token") {
+      let returnTo = "/dashboard";
+      try {
+        if (!sameOrigin(request)) throw new Error("请求来源无效");
+        const form = await request.formData();
+        returnTo = safeReturnTo(typeof form.get("return_to") === "string" ? String(form.get("return_to")) : null);
+        const token = typeof form.get("token") === "string" ? String(form.get("token")) : "";
+        const legalAccepted = form.get("legal_consent") === "accepted";
+        const session = await createAdminTokenSession(env, token, legalAccepted);
+        return redirect(returnTo, [sessionCookie(session)]);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Token 登录失败";
+        return redirect(`/login?error=${encodeURIComponent(message)}&return_to=${encodeURIComponent(returnTo)}`);
+      }
+    }
+
     if (request.method === "GET" && url.pathname === "/auth/dev") {
-      try { return redirect("/dashboard", [sessionCookie(await createDevSession(env))]); }
+      try {
+        if (!isLocalDevelopmentRequest(url, env)) throw new Error("Not found");
+        return redirect("/dashboard", [sessionCookie(await createDevSession(env))]);
+      }
       catch { return json({ error: "Not found" }, 404); }
     }
 
@@ -247,7 +275,7 @@ export default {
 
     if (url.pathname.startsWith("/api/")) {
       const user = await currentUser(request, env);
-      if (!user) return json({ error: "请先使用 LinuxDo 登录" }, 401);
+      if (!user) return json({ error: "请先登录" }, 401);
       if (request.method !== "GET" && !sameOrigin(request)) return json({ error: "请求来源无效" }, 403);
       try {
         return await handleApi(request, env, url, user);
@@ -645,7 +673,7 @@ async function handleApi(request: Request, env: Env, url: URL, user: SessionUser
           monitor,
           discovery,
           { ESIMGG_SESSION_TOKEN: sessionToken },
-          { manual: true },
+          { manual: true, coupon: input.coupon },
         );
         if (order.status !== "created" || !order.paymentUrl) {
           return json({ error: `支付链接生成失败：${order.error || "esim.gg 未返回支付链接"}` }, order.status === "failed" ? 502 : 409);
@@ -720,6 +748,12 @@ async function handleApi(request: Request, env: Env, url: URL, user: SessionUser
 function sameOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
   return !origin || origin === new URL(request.url).origin;
+}
+
+export function isLocalDevelopmentRequest(url: URL, env: Env): boolean {
+  return env.DEV_LOGIN_ENABLED === "true"
+    && url.protocol === "http:"
+    && ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
 }
 
 async function runDueChecks(env: Env): Promise<void> {
@@ -1094,7 +1128,7 @@ async function createUnpaidOrder(
   monitor: Monitor,
   discovery: Discovery,
   providerSecrets: Record<string, string>,
-  options: { manual?: boolean } = {},
+  options: { manual?: boolean; coupon?: string } = {},
 ): Promise<OrderResult> {
   const action = monitor.action;
   if (!action?.enabled) return skippedOrder("Automatic order creation is disabled");
@@ -1149,10 +1183,12 @@ async function createUnpaidOrder(
     const timer = setTimeout(() => controller.abort(), 20_000);
     let response: Response;
     try {
+      const resolvedBody = resolveTemplate(action.bodyTemplate, variables, env, providerSecrets);
+      const checkoutCoupon = options.coupon === undefined ? action.coupon : options.coupon;
       response = await fetch(url, {
         method: action.method || "POST",
         headers,
-        body: resolveTemplate(action.bodyTemplate, variables, env, providerSecrets),
+        body: applyCouponToCheckoutBody(resolvedBody, checkoutCoupon),
         redirect: "manual",
         signal: controller.signal,
       });
@@ -1269,7 +1305,7 @@ export function normalizeNumberSearchInput(input: NumberSearchInput): Required<N
   return { query, minPrice, maxPrice, currency, limit };
 }
 
-export function normalizeManualOrderInput(input: ManualOrderInput): { number: string; expectedPrice: number; acknowledged: true } {
+export function normalizeManualOrderInput(input: ManualOrderInput): { number: string; expectedPrice: number; coupon: string; acknowledged: true } {
   if (!input || typeof input !== "object") throw new Error("Invalid order payload");
   const number = String(input.number || "").trim();
   if (!number || number.length > 40 || !/^[0-9+()\s-]+$/.test(number)) {
@@ -1280,8 +1316,41 @@ export function normalizeManualOrderInput(input: ManualOrderInput): { number: st
   }
   const expectedPrice = Number(input.expectedPrice);
   if (!Number.isFinite(expectedPrice) || expectedPrice < 0) throw new Error("号码价格无效，请刷新后重试");
+  const coupon = normalizeCouponCode(input.coupon);
   if (input.acknowledged !== true) throw new Error("请确认最终付款仍由你手动完成");
-  return { number, expectedPrice, acknowledged: true };
+  return { number, expectedPrice, coupon, acknowledged: true };
+}
+
+function normalizeCouponCode(value: unknown, fallback = "setup"): string {
+  const coupon = String(value ?? fallback).trim();
+  if (coupon.length > 64 || /[\u0000-\u001f\u007f]/.test(coupon)) throw new Error("优惠码格式无效");
+  return coupon;
+}
+
+function couponFromCheckoutBody(body: string): string | undefined {
+  try {
+    const payload = JSON.parse(body) as Record<string, unknown>;
+    return typeof payload?.coupon === "string" ? payload.coupon : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function applyCouponToCheckoutBody(body: string, coupon?: string): string {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    if (coupon === undefined) return body;
+    throw new Error("下单请求模板必须是有效的 JSON，才能填写优惠码");
+  }
+  if (!payload || Array.isArray(payload) || typeof payload !== "object") {
+    if (coupon === undefined) return body;
+    throw new Error("下单请求模板必须是 JSON 对象，才能填写优惠码");
+  }
+  const currentCoupon = (payload as Record<string, unknown>).coupon;
+  const nextCoupon = coupon === undefined && currentCoupon === "" ? "setup" : coupon;
+  return nextCoupon === undefined ? body : JSON.stringify({ ...(payload as Record<string, unknown>), coupon: nextCoupon });
 }
 
 export function normalizeNumberRankingInput(input: NumberRankingInput): NormalizedNumberRankingInput {
@@ -1521,13 +1590,15 @@ function normalizeMonitorInput(input: MonitorInput): Required<Pick<MonitorInput,
     const cooldownMinutes = Math.min(Math.max(Math.trunc(Number(input.action.cooldownMinutes ?? 30)), 1), 1440);
     if (!Number.isFinite(maxOrdersPerCheck) || !Number.isFinite(cooldownMinutes)) throw new Error("Automatic-order limits must be valid numbers");
     const recharge = normalizeRechargeAction(input.action.bodyTemplate, input.action.rechargeAmount);
+    const coupon = normalizeCouponCode(input.action.coupon ?? couponFromCheckoutBody(recharge.bodyTemplate));
     action = {
       enabled: true,
       url: validateTemplateUrl(input.action.url),
       method: input.action.method === "PUT" ? "PUT" : "POST",
       headers: actionHeaders,
-      bodyTemplate: recharge.bodyTemplate,
+      bodyTemplate: applyCouponToCheckoutBody(recharge.bodyTemplate, coupon),
       rechargeAmount: recharge.rechargeAmount,
+      coupon,
       paymentUrlPath: input.action.paymentUrlPath.trim(),
       orderIdPath: input.action.orderIdPath?.trim() || undefined,
       totalPath: input.action.totalPath?.trim() || undefined,

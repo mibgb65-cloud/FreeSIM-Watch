@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { LEGAL_VERSION, oauthStateCookie, safeReturnTo, sessionCookie, sha256 } from '../dist-test/auth.js';
+import { LEGAL_VERSION, adminTokenConfigured, adminTokenMatches, createAdminTokenSession, oauthStateCookie, safeReturnTo, sessionCookie, sha256 } from '../dist-test/auth.js';
 import { decryptProviderToken, encryptProviderToken, normalizeProviderSessionInput } from '../dist-test/provider-session.js';
 import { normalizeResendApiKey, normalizeResendDomain, resendFromAddress, shouldRotateResendKey } from '../dist-test/admin-config.js';
-import { SECURITY_HEADERS } from '../dist-test/index.js';
+import { SECURITY_HEADERS, isLocalDevelopmentRequest } from '../dist-test/index.js';
 import { environmentRegisteredUserLimit, normalizeRegisteredUserLimit } from '../dist-test/registration-limit.js';
 
 test('authentication cookies are HttpOnly, Secure, and scoped correctly', () => {
@@ -46,7 +46,7 @@ test('browser security headers cover worker and static responses', () => {
 });
 
 test('legal consent uses an explicit version', () => {
-  assert.match(LEGAL_VERSION, /^\d{4}-\d{2}-\d{2}$/);
+  assert.match(LEGAL_VERSION, /^\d{4}-\d{2}-\d{2}(?:\.\d+)?$/);
 });
 
 test('registered user limits have a safe configurable range', () => {
@@ -76,6 +76,44 @@ test('session hashes are stable and not stored in plaintext', async () => {
   const digest = await sha256('secret-session');
   assert.equal(digest, crypto.createHash('sha256').update('secret-session').digest('hex'));
   assert.doesNotMatch(digest, /secret-session/);
+});
+
+test('self-hosted admin tokens require a strong configured secret and exact match', async () => {
+  const token = 'self-hosted-token-0123456789-abcdef';
+  assert.equal(adminTokenConfigured(token), true);
+  assert.equal(adminTokenConfigured('too-short'), false);
+  assert.equal(await adminTokenMatches(token, token), true);
+  assert.equal(await adminTokenMatches(`${token}x`, token), false);
+  assert.equal(await adminTokenMatches(token, undefined), false);
+  const operations = [];
+  const env = {
+    ADMIN_TOKEN: token,
+    DB: {
+      prepare(sql) {
+        return {
+          bind(...values) {
+            return { run: async () => operations.push({ sql, values }) };
+          },
+          run: async () => operations.push({ sql, values: [] }),
+        };
+      },
+      batch(statements) { return Promise.all(statements.map((statement) => statement.run())); },
+    },
+  };
+  const session = await createAdminTokenSession(env, token, true);
+  assert.match(session, /^[A-Za-z0-9_-]{32,}$/);
+  assert.equal(operations.some(({ sql }) => sql.includes("INSERT INTO users")), true);
+  assert.equal(operations.some(({ values }) => values.includes(token)), false);
+  await assert.rejects(() => createAdminTokenSession(env, 'wrong-token', true), /Token 无效/);
+  await assert.rejects(() => createAdminTokenSession(env, token, false), /同意/);
+});
+
+test('development login is restricted to local HTTP origins', () => {
+  const env = { DEV_LOGIN_ENABLED: 'true' };
+  assert.equal(isLocalDevelopmentRequest(new URL('http://127.0.0.1:8787'), env), true);
+  assert.equal(isLocalDevelopmentRequest(new URL('http://localhost:8787'), env), true);
+  assert.equal(isLocalDevelopmentRequest(new URL('https://127.0.0.1:8787'), env), false);
+  assert.equal(isLocalDevelopmentRequest(new URL('http://app.example'), env), false);
 });
 
 test('provider tokens are encrypted and bound to one user', async () => {

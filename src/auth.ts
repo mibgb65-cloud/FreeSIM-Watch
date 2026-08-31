@@ -4,7 +4,8 @@ import { getRegisteredUserLimit } from "./registration-limit.js";
 const SESSION_COOKIE = "freesim_session";
 const OAUTH_STATE_COOKIE = "freesim_oauth_state";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
-export const LEGAL_VERSION = "2026-08-31";
+const SELF_HOSTED_ADMIN_ID = "self-hosted-admin";
+export const LEGAL_VERSION = "2026-08-31.1";
 
 export function base64Url(bytes: Uint8Array): string {
   let binary = "";
@@ -56,6 +57,7 @@ export async function currentUser(request: Request, env: Env): Promise<SessionUs
      WHERE s.token_hash = ? AND s.expires_at > CURRENT_TIMESTAMP
        AND u.legal_version = ? AND u.banned_at IS NULL`,
   ).bind(await sha256(token), LEGAL_VERSION).first<{ id: string; username: string; name: string; avatar_url: string | null; role: "user" | "admin"; trust_level: number }>();
+  if (row?.id === SELF_HOSTED_ADMIN_ID && !adminTokenConfigured(env.ADMIN_TOKEN)) return null;
   return row ? { id: row.id, username: row.username, name: row.name, avatarUrl: row.avatar_url, role: row.role, trustLevel: Number(row.trust_level || 0) } : null;
 }
 
@@ -69,6 +71,42 @@ async function createSession(env: Env, userId: string): Promise<string> {
     ).bind(await sha256(token), userId),
   ]);
   return token;
+}
+
+export function adminTokenConfigured(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length >= 32
+    && value.length <= 256
+    && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+export async function adminTokenMatches(candidate: unknown, configured: unknown): Promise<boolean> {
+  const candidateValue = typeof candidate === "string" ? candidate : "";
+  const candidateText = candidateValue.length <= 256 ? candidateValue : "";
+  const configuredText = typeof configured === "string" ? configured : "";
+  const [candidateHash, configuredHash] = await Promise.all([
+    crypto.subtle.digest("SHA-256", new TextEncoder().encode(candidateText)),
+    crypto.subtle.digest("SHA-256", new TextEncoder().encode(configuredText)),
+  ]);
+  const left = new Uint8Array(candidateHash);
+  const right = new Uint8Array(configuredHash);
+  let difference = adminTokenConfigured(configured) && candidateValue.length <= 256 ? 0 : 1;
+  for (let index = 0; index < left.length; index += 1) difference |= left[index] ^ right[index];
+  return difference === 0;
+}
+
+export async function createAdminTokenSession(env: Env, candidate: unknown, legalAccepted: boolean): Promise<string> {
+  if (!legalAccepted) throw new Error("请先阅读并同意隐私政策和服务协议");
+  if (!await adminTokenMatches(candidate, env.ADMIN_TOKEN)) throw new Error("站点 Token 无效或未配置");
+  await env.DB.prepare(
+    `INSERT INTO users (id, username, name, role, trust_level, privacy_accepted_at, terms_accepted_at, legal_version)
+     VALUES (?, 'self_hosted', '自托管管理员', 'admin', 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
+     ON CONFLICT(id) DO UPDATE SET role = 'admin', trust_level = 4,
+       privacy_accepted_at = CURRENT_TIMESTAMP, terms_accepted_at = CURRENT_TIMESTAMP,
+       legal_version = excluded.legal_version, banned_at = NULL, updated_at = CURRENT_TIMESTAMP,
+       last_login_at = CURRENT_TIMESTAMP`,
+  ).bind(SELF_HOSTED_ADMIN_ID, LEGAL_VERSION).run();
+  return createSession(env, SELF_HOSTED_ADMIN_ID);
 }
 
 export async function destroySession(request: Request, env: Env): Promise<void> {

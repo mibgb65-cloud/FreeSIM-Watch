@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildDiscoveryEmail, buildManualOrderEmail, buildMonitorCreatedEmail, normalizeManualOrderInput, normalizeNumberRankingInput, normalizeNumberSearchInput, normalizeRechargeAction, parseCandidates, resolveTemplate, validateTargetUrl } from '../dist-test/index.js';
+import { applyCouponToCheckoutBody, buildDiscoveryEmail, buildManualOrderEmail, buildMonitorCreatedEmail, normalizeManualOrderInput, normalizeNumberRankingInput, normalizeNumberSearchInput, normalizeRechargeAction, parseCandidates, resolveTemplate, validateTargetUrl } from '../dist-test/index.js';
 
 test('parses and filters a generic JSON response', () => {
   const input = JSON.stringify({
@@ -115,11 +115,23 @@ test('normalizes number ranking filters', () => {
 
 test('requires an exact phone number and explicit acknowledgement for manual orders', () => {
   assert.deepEqual(normalizeManualOrderInput({ number: ' 37253198043 ', expectedPrice: 0.94, acknowledged: true }), {
-    number: '37253198043', expectedPrice: 0.94, acknowledged: true,
+    number: '37253198043', expectedPrice: 0.94, coupon: 'setup', acknowledged: true,
   });
+  assert.equal(normalizeManualOrderInput({ number: '37253198043', expectedPrice: 0.94, coupon: ' custom-40 ', acknowledged: true }).coupon, 'custom-40');
   assert.throws(() => normalizeManualOrderInput({ number: '37253198043', expectedPrice: 0.94, acknowledged: false }), /手动完成/);
   assert.throws(() => normalizeManualOrderInput({ number: 'DROP TABLE', expectedPrice: 0.94, acknowledged: true }), /格式无效/);
   assert.throws(() => normalizeManualOrderInput({ number: '37253198043', expectedPrice: null, acknowledged: true }), /价格无效/);
+  assert.throws(() => normalizeManualOrderInput({ number: '37253198043', expectedPrice: 0.94, coupon: 'bad\ncode', acknowledged: true }), /优惠码格式无效/);
+});
+
+test('writes the selected coupon into the checkout body', () => {
+  const body = applyCouponToCheckoutBody(JSON.stringify({ msisdn: '37253198043', coupon: '' }), 'setup');
+  assert.deepEqual(JSON.parse(body), { msisdn: '37253198043', coupon: 'setup' });
+  assert.equal(JSON.parse(applyCouponToCheckoutBody(JSON.stringify({ coupon: 'setup' }), '')).coupon, '');
+  assert.equal(JSON.parse(applyCouponToCheckoutBody(JSON.stringify({ coupon: '' }))).coupon, 'setup');
+  assert.equal(JSON.parse(applyCouponToCheckoutBody(JSON.stringify({ coupon: 'saved-code' }))).coupon, 'saved-code');
+  assert.equal(applyCouponToCheckoutBody('not json'), 'not json');
+  assert.throws(() => applyCouponToCheckoutBody('not json', 'setup'), /有效的 JSON/);
 });
 
 test('enforces esim.gg minimum recharge amount and writes it into the checkout body', () => {

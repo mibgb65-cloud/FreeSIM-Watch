@@ -14,7 +14,7 @@
 - 默认筛选爱沙尼亚 `+372`、`EUR` 和显示号码费 `€0.00`；启用自动动作后可改为自定义最高价格
 - 新发现去重，避免每轮重复通知
 - 可选：自动创建待支付订单并在邮件中发送支付链接
-- LinuxDo OAuth 登录，HttpOnly Cookie 会话，不把认证 token 放进浏览器存储
+- 可选的 LinuxDo OAuth 或自托管站点 Token 登录，HttpOnly Cookie 会话，不把认证 token 放进浏览器存储
 - 每个用户独立的监控、历史、订单和 esim.gg 登录会话
 - 每个用户可绑定多个 esim.gg 账号；创建监控时明确选择使用的账号
 - 管理员可按 LinuxDo 信任等级 0–4 设置每位用户的监控任务上限
@@ -76,19 +76,34 @@ Cron Trigger ──> Worker ──> 获授权的 esim.gg 会话
 
    第二条命令只登记当前仓库已经包含在 `schema.sql` 中的历史迁移，之后新增迁移即可使用 `npx wrangler d1 migrations apply freesim-watch --remote`。
 
-4. 修改 `wrangler.jsonc` 中的 `PUBLIC_ORIGIN`、可选自定义域名、`ADMIN_USER_IDS` 和 `MAX_REGISTERED_USERS`。`ADMIN_USER_IDS` 填你自己的 LinuxDo 用户 ID，多个 ID 使用逗号分隔。
+4. 修改 `wrangler.jsonc` 中的 `PUBLIC_ORIGIN`、可选自定义域名和 `MAX_REGISTERED_USERS`。如果使用 LinuxDo 多用户登录，再填写 `ADMIN_USER_IDS`；多个 ID 使用逗号分隔。
 
-5. 在 [LinuxDo Connect](https://connect.linux.do/) 创建应用，回调地址填写：
+5. 至少配置一种正式登录方式：
+
+   个人自托管建议使用随机站点 Token，无需配置 LinuxDo。用密码管理器生成 32–256 个字符的随机值，然后写入 Worker Secret：
+
+   ```bash
+   npx wrangler secret put ADMIN_TOKEN
+   ```
+
+   `ADMIN_TOKEN` 不要写入 `wrangler.jsonc`、README、Issue 或 Git；登录成功后浏览器只保存 HttpOnly Session Cookie，不保存原始 Token。删除或清空该 Secret 会立即停用现有站点 Token 会话。
+
+   如需多用户登录，则在 [LinuxDo Connect](https://connect.linux.do/) 创建应用，回调地址填写：
 
    ```text
    https://你的正式域名/auth/linuxdo/callback
    ```
 
-   然后配置 secrets：
+   然后配置：
 
    ```bash
    npx wrangler secret put LINUXDO_CLIENT_ID
    npx wrangler secret put LINUXDO_CLIENT_SECRET
+   ```
+
+   两种登录方式可以同时开启。之后配置所有部署都需要的加密密钥，以及可选的默认 Resend 发件配置：
+
+   ```bash
    npm run security:key
    npx wrangler secret put RESEND_API_KEY
    npx wrangler secret put RESEND_FROM
@@ -102,7 +117,7 @@ Cron Trigger ──> Worker ──> 获授权的 esim.gg 会话
    npm run deploy
    ```
 
-部署命令会先构建 Vue 管理台，再上传 Worker 和 `dist` 静态资源。打开 Worker URL，点击“使用 LinuxDo 登录”。
+部署命令会先构建 Vue 管理台，再上传 Worker 和 `dist` 静态资源。打开 Worker URL，使用已配置的 LinuxDo 或站点 Token 登录。
 
 从 `0.1.0` 的早期监控-only 版本升级时，执行：
 
@@ -125,7 +140,7 @@ npx wrangler d1 execute freesim-watch --remote --file=scripts/baseline-migration
 
 ## 本地开发
 
-复制 `.dev.vars.example` 为 `.dev.vars`，填写开发值并生成本地加密密钥，然后初始化本地 D1：
+复制 `.dev.vars.example` 为 `.dev.vars`，填写开发值并生成本地加密密钥，然后初始化本地 D1。示例中的 `DEV_LOGIN_ENABLED=true` 仅用于本机开发；Worker 现在也会拒绝非 localhost 的开发登录请求，生产环境不要配置它：
 
 ```bash
 npx wrangler d1 execute freesim-watch --local --file=schema.sql
@@ -204,15 +219,15 @@ npm run esimgg:session -- --server http://127.0.0.1:5173 --code 页面生成的�
 - `{{number}}`、`{{numberEncoded}}`
 - `{{price}}`、`{{currency}}`
 - `{{fingerprint}}`、`{{discoveryId}}`
-- `{{secret:NAME}}`（从 Worker secret 读取）
+- `{{secret:NAME}}`（仅从当前监控运行时提供的 Secret 覆盖表读取，默认只有该用户的 `ESIMGG_SESSION_TOKEN`）
 
 启用前必须勾选“接口只创建待支付订单”的确认项。每条发现只创建一条本地订单记录；请求会携带号码指纹作为 `Idempotency-Key`，但第三方是否真正支持幂等仍取决于其接口。
 
-LinuxDo 登录和 esim.gg 登录是两套独立会话。Worker 不会绕过 OAuth、Passkey、验证码、登录或 WAF。esim.gg 会话失效后需要重新登录并导入。
+LinuxDo、站点 Token 和 esim.gg 登录是三套独立凭据。Worker 不会绕过 OAuth、Passkey、验证码、登录或 WAF。esim.gg 会话失效后需要重新登录并导入。
 
 ## 管理员后台
 
-`ADMIN_USER_IDS` 中的 LinuxDo 用户会在顶部看到“管理”，也可以直接访问 `/admin`。普通用户无法调用 `/api/admin/*`，权限由 Worker 后端校验。
+使用 LinuxDo 登录时，`ADMIN_USER_IDS` 中的用户会在顶部看到“管理”；使用站点 Token 登录的自托管管理员默认拥有管理员权限，也可以直接访问 `/admin`。普通用户无法调用 `/api/admin/*`，权限由 Worker 后端校验。
 
 管理员可在“用户概览”中修改总注册用户上限。`MAX_REGISTERED_USERS` 只是 D1 尚未保存自定义设置时的默认值；达到上限后，已注册用户仍可登录，新用户会被拒绝。即使名额已满，`ADMIN_USER_IDS` 中的管理员仍允许首次登录，避免部署者被锁在后台之外。
 
@@ -263,13 +278,13 @@ Worker 发出的 esim.gg `fetch` 属于子请求，不会额外计作 Worker 入
 
 ## 安全说明
 
-这是个人/小团队自托管工具。管理页是公开静态资源，用户通过 LinuxDo OAuth 登录；D1 中所有业务数据都通过监控任务的 `user_id` 做租户隔离。会话 Cookie 使用 `HttpOnly; Secure; SameSite=Lax`，不存入 `sessionStorage`。请为 Worker 配置自定义域名和 Cloudflare Access 作为额外保护。
+这是个人/小团队自托管工具。管理页是公开静态资源，用户通过 LinuxDo OAuth 或站点 Token 登录；D1 中所有业务数据都通过监控任务的 `user_id` 做租户隔离。会话 Cookie 使用 `HttpOnly; Secure; SameSite=Lax`，不存入 `sessionStorage`。请为 Worker 配置自定义域名和 Cloudflare Access 作为额外保护。
 
 请求端限制响应为 2 MB、20 秒超时，并拒绝明显的本地/私有 IPv4 URL。DNS 重绑定和全部 IPv6 私网形式不可能仅靠字符串检查彻底防住，因此不要把 D1 或 Cloudflare Secret 权限提供给不受信任的人，也不要把此实例开放成公共 SaaS。
 
 esim.gg 会话和管理员托管的 Resend Key 密文会存入 D1；真实凭据只在 Worker 内存中短暂解密使用。请限制 D1 和 Cloudflare 账户权限。轮换 `SESSION_ENCRYPTION_KEY` 后，所有用户都需要重新导入 esim.gg 会话，管理员也需要重新添加托管的 Resend Key。
 
-第三方订单响应仅保存订单 ID、支付 URL、金额和错误摘要，不保存完整响应正文。LinuxDo Client Secret 和加密主密钥只通过 Worker Secret 提供。
+第三方订单响应仅保存订单 ID、支付 URL、金额和错误摘要，不保存完整响应正文。LinuxDo Client Secret、`ADMIN_TOKEN` 和加密主密钥只通过 Worker Secret 提供。
 
 ## 开发检查
 

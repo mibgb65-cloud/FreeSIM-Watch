@@ -16,4 +16,6 @@ If the report involves a deployed instance, include the instance hostname and ap
 - Configure `ADMIN_USER_IDS` with your own LinuxDo user ID; do not reuse the maintainer's ID.
 - Keep at least one working administrator account. The UI prevents an administrator from banning or deleting their current account.
 - Treat imported esim.gg session tokens, OAuth secrets, Resend keys, and `SESSION_ENCRYPTION_KEY` as production secrets.
+- Store `ADMIN_TOKEN` only as a Worker Secret or in ignored `.dev.vars`; use a randomly generated value of at least 32 characters and rotate it if exposed. Removing or clearing the Secret disables existing Token sessions.
+- Keep `DEV_LOGIN_ENABLED=true` local-only; the Worker rejects `/auth/dev` on non-localhost HTTP origins, but production deployments should omit this variable entirely.
 - Do not expose an instance as a public multi-tenant SaaS without adding rate limits, abuse controls, and a complete SSRF defense for custom monitor targets.

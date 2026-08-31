@@ -17,7 +17,7 @@ The integration creates an unpaid checkout only. It never opens or pays the Stri
 
 ## Authentication
 
-The API accepts the account cookie named `__Secure-nekopass.session_token`. Tests showed that `session_data`, `cf_clearance`, and `__cf_bm` are not required for the read-only number search. Each LinuxDo user can bind multiple esim.gg accounts, each identified by a local label. The Worker verifies each value with a read-only number search, then encrypts it before storing it in D1. A monitor references exactly one account ID.
+The API accepts the account cookie named `__Secure-nekopass.session_token`. Tests showed that `session_data`, `cf_clearance`, and `__cf_bm` are not required for the read-only number search. Each authenticated user can bind multiple esim.gg accounts, each identified by a local label. The Worker verifies each value with a read-only number search, then encrypts it before storing it in D1. A monitor references exactly one account ID. Authentication can use LinuxDo OAuth or the optional self-hosted `ADMIN_TOKEN` login.
 
 The web page cannot read the esim.gg cookie automatically because it belongs to a different origin and is HttpOnly. In Chrome or Edge, copy its value from DevTools → Application → Cookies → `https://esim.gg`. The web form also accepts a complete cookie line containing `__Secure-nekopass.session_token=...`.
 
@@ -72,7 +72,7 @@ Referer: https://esim.gg/new/number/estonia
   "msisdn": "{{number}}",
   "payment_method": "alipay",
   "recharge_amount": 1,
-  "coupon": "",
+  "coupon": "setup",
   "validity_addon": "none",
   "data_package": "none",
   "metadata": {}
@@ -103,5 +103,5 @@ Each monitor can set its own `recharge_amount`. A live unpaid-checkout test on 2
 - A 30-minute cooldown prevents another pending checkout.
 - The monitor pauses after a checkout URL is created.
 - Each discovery is unique and each discovery can have at most one local order.
-- Each LinuxDo user's session is stored as AES-GCM ciphertext under that user's ID.
+- Each authenticated user's session is stored as AES-GCM ciphertext under that user's ID.
 - The encryption key remains a Worker Secret and is never stored in D1.

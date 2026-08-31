@@ -35,7 +35,7 @@ const primaryLabel = computed(() => appState.user ? '进入控制台' : '登录'
           <h1>爱沙尼亚号码监控</h1>
           <p class="public-hero-lead">持续检查 esim.gg 的 +372 号码，把每轮价格写入你的私人数据库。找到免费号码后创建待支付订单，并把 Stripe 链接发到邮箱。</p>
           <div class="public-hero-actions">
-            <RouterLink class="button button-primary public-cta" :to="primaryTarget">{{ appState.user ? '打开我的监控台' : '使用 LinuxDo 开始' }}</RouterLink>
+            <RouterLink class="button button-primary public-cta" :to="primaryTarget">{{ appState.user ? '打开我的监控台' : '登录并开始' }}</RouterLink>
             <a class="public-text-link" href="#workflow">了解工作流程 <span aria-hidden="true">→</span></a>
           </div>
           <div class="public-trust" aria-label="产品特性">
@@ -81,14 +81,14 @@ const primaryLabel = computed(() => appState.user ? '进入控制台' : '登录'
       <section id="workflow" class="public-section public-workflow-section">
         <header class="public-section-heading"><p class="eyebrow">HOW IT WORKS</p><h2>三步建立属于你的监控。</h2></header>
         <ol class="public-workflow">
-          <li><span>01</span><div><h3>使用 LinuxDo 登录</h3><p>网站身份只用于区分用户，每个人只看到自己的配置和历史。</p></div></li>
+          <li><span>01</span><div><h3>登录你的实例</h3><p>可使用 LinuxDo 多用户登录，个人自托管也可使用站点 Token。</p></div></li>
           <li><span>02</span><div><h3>绑定 esim.gg 会话</h3><p>通过一次性导入码上传，Worker 加密后保存，不在网页展示明文。</p></div></li>
           <li><span>03</span><div><h3>等待邮件提醒</h3><p>发现 €0.00 号码费时创建待支付订单，由你打开链接并最终确认。</p></div></li>
         </ol>
       </section>
 
       <section id="security" class="public-section public-security-card">
-        <div><p class="eyebrow">PRIVATE BY DEFAULT</p><h2>共享号码，不共享账户。</h2><p>全站只共享不含用户来源的号码与最新价格；监控任务、订单记录、通知邮箱和 esim.gg 登录会话仍按 LinuxDo 用户隔离。</p></div>
+        <div><p class="eyebrow">PRIVATE BY DEFAULT</p><h2>共享号码，不共享账户。</h2><p>全站只共享不含用户来源的号码与最新价格；监控任务、订单记录、通知邮箱和 esim.gg 登录会话仍按登录用户隔离。</p></div>
         <ul>
           <li><span class="security-check" aria-hidden="true"></span>HttpOnly 登录 Cookie</li>
           <li><span class="security-check" aria-hidden="true"></span>AES-GCM 会话加密</li>
@@ -101,7 +101,7 @@ const primaryLabel = computed(() => appState.user ? '进入控制台' : '登录'
         <p class="eyebrow">READY WHEN YOU ARE</p>
         <h2>让 Worker 替你守着号码池。</h2>
         <p>登录后创建你的 esim.gg 监控任务。</p>
-        <RouterLink class="button button-primary public-cta" :to="primaryTarget">{{ appState.user ? '进入控制台' : '使用 LinuxDo 登录' }}</RouterLink>
+        <RouterLink class="button button-primary public-cta" :to="primaryTarget">{{ appState.user ? '进入控制台' : '登录' }}</RouterLink>
       </section>
     </main>
 

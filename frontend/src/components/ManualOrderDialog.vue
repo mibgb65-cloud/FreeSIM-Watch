@@ -8,13 +8,16 @@ const props = defineProps({
   monitorName: { type: String, default: '' },
   accountLabel: { type: String, default: '' },
   notifyEmail: { type: String, default: '' },
+  coupon: { type: String, default: 'setup' },
   loading: Boolean,
 });
 const emit = defineEmits(['cancel', 'confirm']);
 const dialog = ref(null);
+const orderCoupon = ref('setup');
 const lastSeenAt = computed(() => props.item?.lastSeenAt || props.item?.last_seen_at || props.item?.first_seen_at || null);
 
 watch(() => props.open, async (open) => {
+  if (open) orderCoupon.value = props.coupon;
   await nextTick();
   if (open && !dialog.value?.open) dialog.value?.showModal();
   if (!open && dialog.value?.open) dialog.value.close();
@@ -47,10 +50,14 @@ function cancel(event) {
           <div><dt>通知邮箱</dt><dd>{{ notifyEmail || '—' }}</dd></div>
           <div><dt>最近出现</dt><dd>{{ formatDate(lastSeenAt) }}</dd></div>
         </dl>
+        <label class="manual-order-coupon" for="manual-order-coupon">优惠码
+          <input id="manual-order-coupon" v-model.trim="orderCoupon" :disabled="loading" maxlength="64" autocomplete="off" spellcheck="false" aria-describedby="manual-order-coupon-help" />
+          <small id="manual-order-coupon-help"><code>setup</code> 可减 €0.40；可修改或清空，最终优惠以 Stripe 页面为准。</small>
+        </label>
         <p class="manual-order-warning">这是手动操作，不受任务的自动下单价格上限约束。号码可能已被他人购买；最终价格和订单内容以 Stripe 支付页面为准。</p>
         <div class="confirm-dialog-actions">
           <button class="button button-secondary" type="button" :disabled="loading" autofocus @click="cancel">取消</button>
-          <button class="button button-primary" type="button" :disabled="loading" @click="emit('confirm')"><span v-if="loading" class="spinner" aria-hidden="true"></span>{{ loading ? '正在生成…' : '确认生成链接' }}</button>
+          <button class="button button-primary" type="button" :disabled="loading" @click="emit('confirm', orderCoupon)"><span v-if="loading" class="spinner" aria-hidden="true"></span>{{ loading ? '正在生成…' : '确认生成链接' }}</button>
         </div>
       </div>
     </dialog>

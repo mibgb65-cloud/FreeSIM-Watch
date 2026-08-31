@@ -6,6 +6,7 @@ import MetricCard from '../components/MetricCard.vue';
 import PageHero from '../components/PageHero.vue';
 import StatusBadge from '../components/StatusBadge.vue';
 import UiSelect from '../components/UiSelect.vue';
+import { couponFromAction } from '../lib/order';
 import { api, appState, formatDate, formatMoney, notify } from '../lib/session';
 
 const form = reactive({ monitorId: '', query: '', minPrice: null, maxPrice: null, currency: 'EUR' });
@@ -108,7 +109,7 @@ function requestManualOrder(item) {
   manualOrderTarget.value = item;
 }
 
-async function confirmManualOrder() {
+async function confirmManualOrder(coupon = 'setup') {
   const item = manualOrderTarget.value;
   const monitor = selectedMonitor.value;
   if (!item || !monitor) return;
@@ -116,7 +117,7 @@ async function confirmManualOrder() {
   try {
     const data = await api(`monitors/${encodeURIComponent(monitor.id)}/numbers/order`, {
       method: 'POST',
-      body: JSON.stringify({ number: item.number, expectedPrice: item.price, acknowledged: true }),
+      body: JSON.stringify({ number: item.number, expectedPrice: item.price, coupon, acknowledged: true }),
     });
     orderUrls[`${monitor.id}|${item.number}`] = data.order.paymentUrl;
     manualOrderTarget.value = null;
@@ -187,6 +188,6 @@ onMounted(loadMonitors);
       </div>
     </section>
 
-    <ManualOrderDialog :open="Boolean(manualOrderTarget)" :item="manualOrderTarget" :monitor-name="selectedMonitor?.name" :account-label="selectedMonitor?.providerSessionLabel" :notify-email="selectedMonitor?.notifyEmail" :loading="creatingManualOrder" @cancel="manualOrderTarget = null" @confirm="confirmManualOrder" />
+    <ManualOrderDialog :open="Boolean(manualOrderTarget)" :item="manualOrderTarget" :monitor-name="selectedMonitor?.name" :account-label="selectedMonitor?.providerSessionLabel" :notify-email="selectedMonitor?.notifyEmail" :coupon="couponFromAction(selectedMonitor?.action)" :loading="creatingManualOrder" @cancel="manualOrderTarget = null" @confirm="confirmManualOrder" />
   </div>
 </template>

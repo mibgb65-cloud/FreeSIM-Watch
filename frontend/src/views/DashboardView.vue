@@ -7,6 +7,7 @@ import PageHero from '../components/PageHero.vue';
 import StatusBadge from '../components/StatusBadge.vue';
 import UiSelect from '../components/UiSelect.vue';
 import { deleteLocalCheckHistoryForMonitor, saveLocalCheckRun } from '../lib/history';
+import { couponFromAction } from '../lib/order';
 import { api, appState, formatDate, formatMoney, notify } from '../lib/session';
 
 const monitors = computed(() => appState.monitors);
@@ -60,8 +61,8 @@ function defaultForm() {
     currency: 'EUR', numberPrefix: '372', maxPrice: 0, enabled: true, actionEnabled: true,
     actionUrl: 'https://api.esim.gg/api/checkout/create', actionMethod: 'POST',
     actionHeadersText: JSON.stringify({ 'content-type': 'application/json', cookie: '__Secure-nekopass.session_token={{secret:ESIMGG_SESSION_TOKEN}}', origin: 'https://esim.gg', referer: 'https://esim.gg/new/number/estonia' }, null, 2),
-    actionBody: JSON.stringify({ order_type: 'new_line', msisdn: '{{number}}', payment_method: 'alipay', recharge_amount: 1, coupon: '', validity_addon: 'none', data_package: 'none', metadata: {} }, null, 2),
-    paymentUrlPath: 'redirect_url', orderIdPath: '', totalPath: 'total_price', actionCurrencyPath: '', maxCandidatePrice: 0, rechargeAmount: 1,
+    actionBody: JSON.stringify({ order_type: 'new_line', msisdn: '{{number}}', payment_method: 'alipay', recharge_amount: 1, coupon: 'setup', validity_addon: 'none', data_package: 'none', metadata: {} }, null, 2),
+    paymentUrlPath: 'redirect_url', orderIdPath: '', totalPath: 'total_price', actionCurrencyPath: '', maxCandidatePrice: 0, rechargeAmount: 1, coupon: 'setup',
     maxOrdersPerCheck: 1, cooldownMinutes: 30, disableAfterOrder: true, actionAcknowledged: true,
   };
 }
@@ -96,7 +97,8 @@ function payload() {
     headers: parseObject(form.actionHeadersText, '下单请求头'), bodyTemplate: form.actionBody,
     paymentUrlPath: form.paymentUrlPath, orderIdPath: form.orderIdPath || undefined,
     totalPath: form.totalPath || undefined, currencyPath: form.actionCurrencyPath || undefined,
-    maxCandidatePrice, rechargeAmount: Number(form.rechargeAmount), maxOrdersPerCheck: Number(form.maxOrdersPerCheck),
+    maxCandidatePrice, rechargeAmount: Number(form.rechargeAmount), coupon: form.coupon,
+    maxOrdersPerCheck: Number(form.maxOrdersPerCheck),
     cooldownMinutes: Number(form.cooldownMinutes), disableMonitorAfterOrder: form.disableAfterOrder,
     unpaidOnlyAcknowledged: form.actionAcknowledged,
   } : null;
@@ -121,6 +123,7 @@ function editMonitor(monitor) {
     actionEnabled: Boolean(monitor.action?.enabled),
     maxCandidatePrice: monitor.action?.maxCandidatePrice ?? 0,
     rechargeAmount: monitor.action?.rechargeAmount ?? rechargeAmountFromBody(monitor.action?.bodyTemplate),
+    coupon: couponFromAction(monitor.action),
     actionAcknowledged: monitor.action?.unpaidOnlyAcknowledged ?? true,
   });
   nextTick(() => editor.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
@@ -345,7 +348,7 @@ function requestManualOrder(item) {
   manualOrderTarget.value = item;
 }
 
-async function confirmManualOrder() {
+async function confirmManualOrder(coupon = 'setup') {
   const item = manualOrderTarget.value;
   const monitor = manualOrderMonitor(item);
   if (!item || !monitor) return;
@@ -353,7 +356,7 @@ async function confirmManualOrder() {
   try {
     const data = await api(`monitors/${encodeURIComponent(monitor.id)}/numbers/order`, {
       method: 'POST',
-      body: JSON.stringify({ number: item.number, expectedPrice: item.price, acknowledged: true }),
+      body: JSON.stringify({ number: item.number, expectedPrice: item.price, coupon, acknowledged: true }),
     });
     item.payment_url = data.order.paymentUrl;
     item.order_status = 'created';
@@ -457,6 +460,7 @@ onBeforeUnmount(() => window.clearInterval(importPollTimer));
             <div v-if="form.actionEnabled" class="automation-price-grid">
               <label class="automation-price-field" for="monitor-max-candidate-price">自动生成支付链接的最高号码费（EUR）<input id="monitor-max-candidate-price" v-model.number="form.maxCandidatePrice" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" /><small>{{ Number(form.maxCandidatePrice || 0) > 0 ? `价格不高于 €${Number(form.maxCandidatePrice).toFixed(2)} 的号码会尝试生成链接。` : '填 0 表示仅处理免费号码（€0.00）。' }}</small></label>
               <label class="automation-price-field" for="monitor-recharge-amount">初始预存金额（EUR）<input id="monitor-recharge-amount" v-model.number="form.rechargeAmount" type="number" min="0.02" step="0.01" inputmode="decimal" required aria-describedby="monitor-recharge-help" placeholder="1.00" /><small id="monitor-recharge-help">esim.gg 最低允许预存 €0.02；最终优惠与待支付总额以 Stripe 页面为准。</small></label>
+              <label class="automation-price-field automation-coupon-field" for="monitor-coupon">优惠码<input id="monitor-coupon" v-model.trim="form.coupon" maxlength="64" autocomplete="off" spellcheck="false" aria-describedby="monitor-coupon-help" /><small id="monitor-coupon-help">默认 <code>setup</code>，预计减 €0.40；可修改或清空，最终优惠以 Stripe 页面为准。</small></label>
             </div>
             <label v-if="form.actionEnabled" class="check-label choice-card"><input v-model="form.actionAcknowledged" class="choice-native" required type="checkbox" /><span class="choice-box" aria-hidden="true"></span><span>我确认这一步只创建待支付订单，最终付款仍由我手动完成</span></label>
             <p>{{ form.actionEnabled && Number(form.maxCandidatePrice || 0) > 0 ? `固定规则：仅匹配 +372、EUR，价格不高于 €${Number(form.maxCandidatePrice).toFixed(2)}；每次最多创建 1 个订单，创建成功后暂停任务。` : '固定规则：仅匹配 +372、显示号码费 €0.00；每次最多创建 1 个订单，创建成功后暂停任务。' }}</p>
@@ -472,7 +476,7 @@ onBeforeUnmount(() => window.clearInterval(importPollTimer));
       <div class="table-wrap"><table class="mobile-card-table"><thead><tr><th>号码</th><th>价格</th><th>来源</th><th>订单</th><th>首次发现</th><th>支付</th></tr></thead><tbody><tr v-if="!discoveries.length" class="mobile-table-empty"><td colspan="6" class="empty-state">还没有发现符合条件的号码。</td></tr><tr v-for="item in discoveries" :key="item.id"><td data-label="号码"><strong class="mono">{{ item.number }}</strong></td><td data-label="价格">{{ formatMoney(item.price, item.currency) }}</td><td data-label="来源">{{ item.monitor_name }}</td><td data-label="订单"><StatusBadge v-if="item.order_status" :tone="item.order_status === 'created' ? 'success' : item.order_status === 'failed' ? 'danger' : 'neutral'">{{ item.order_status }}</StatusBadge><span v-else>仅通知</span></td><td data-label="首次发现">{{ formatDate(item.first_seen_at) }}</td><td data-label="支付"><a v-if="item.payment_url" class="button button-small button-primary" :href="item.payment_url" target="_blank" rel="noreferrer">去支付</a><button v-else class="button button-small button-secondary" type="button" @click="requestManualOrder(item)">生成支付链接</button></td></tr></tbody></table></div>
     </section>
 
-    <ManualOrderDialog :open="Boolean(manualOrderTarget)" :item="manualOrderTarget" :monitor-name="manualOrderMonitor()?.name" :account-label="manualOrderMonitor()?.providerSessionLabel" :notify-email="manualOrderMonitor()?.notifyEmail" :loading="creatingManualOrder" @cancel="manualOrderTarget = null" @confirm="confirmManualOrder" />
+    <ManualOrderDialog :open="Boolean(manualOrderTarget)" :item="manualOrderTarget" :monitor-name="manualOrderMonitor()?.name" :account-label="manualOrderMonitor()?.providerSessionLabel" :notify-email="manualOrderMonitor()?.notifyEmail" :coupon="couponFromAction(manualOrderMonitor()?.action)" :loading="creatingManualOrder" @cancel="manualOrderTarget = null" @confirm="confirmManualOrder" />
 
     <Teleport to="body">
     <dialog ref="deleteDialog" class="confirm-dialog" aria-labelledby="delete-monitor-title" aria-describedby="delete-monitor-description" @click.self="closeDeleteDialog" @cancel="handleDeleteCancel" @close="deleteTarget = null">

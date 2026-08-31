@@ -7,6 +7,8 @@ LINUXDO_TOKEN_URL="https://connect.linux.do/oauth2/token"
 LINUXDO_USER_URL="https://connect.linux.do/api/user"
 LINUXDO_CLIENT_ID=""
 LINUXDO_CLIENT_SECRET=""
+# Optional self-hosted administrator login. Use a random 32-256 character value.
+ADMIN_TOKEN=""
 # Fill this safely with: npm run security:key -- --local
 SESSION_ENCRYPTION_KEY=""
 DEV_LOGIN_ENABLED="true"

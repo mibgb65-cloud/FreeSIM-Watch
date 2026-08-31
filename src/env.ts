@@ -16,6 +16,7 @@ export interface Env {
   MAX_REGISTERED_USERS?: string;
   LEGACY_OWNER_USER_ID?: string;
   ADMIN_USER_IDS?: string;
+  ADMIN_TOKEN?: string;
   ESIMGG_SESSION_TOKEN?: string;
 }
 

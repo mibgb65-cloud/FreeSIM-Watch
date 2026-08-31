@@ -4,6 +4,12 @@ node_modules/
 wrangler.jsonc
 .env
 .env.*
+.envrc
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
 *.db
 *.sqlite
 *.sqlite3
