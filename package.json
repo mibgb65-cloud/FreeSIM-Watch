@@ -1,0 +1,32 @@
+{
+  "name": "freesim-watch",
+  "version": "0.1.0",
+  "private": false,
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "description": "Cloudflare Worker for monitoring esim.gg Estonia numbers and notifying via Resend.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:worker": "npm run build && wrangler dev",
+    "build": "vite build",
+    "deploy": "npm run build && wrangler deploy",
+    "esimgg:login": "node scripts/open-esimgg-login.mjs",
+    "esimgg:session": "node scripts/import-esimgg-session.mjs",
+    "security:key": "node scripts/configure-encryption-key.mjs",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm test && npm run build",
+    "test": "tsc --outDir dist-test --noEmit false && node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260830.1",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "typescript": "^5.8.3",
+    "vite": "^7.3.5",
+    "wrangler": "^4.33.0"
+  },
+  "dependencies": {
+    "vue": "^3.5.0",
+    "vue-router": "^4.5.0"
+  }
+}

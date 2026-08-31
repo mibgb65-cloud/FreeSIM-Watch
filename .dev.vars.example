@@ -1,0 +1,17 @@
+RESEND_API_KEY="re_replace_me"
+RESEND_FROM="FreeSIM Watch <alerts@your-domain.example>"
+CHECK_USER_AGENT="freesim-watch/0.1.0 (contact: you@example.com)"
+PUBLIC_ORIGIN="http://127.0.0.1:5173"
+LINUXDO_AUTHORIZE_URL="https://connect.linux.do/oauth2/authorize"
+LINUXDO_TOKEN_URL="https://connect.linux.do/oauth2/token"
+LINUXDO_USER_URL="https://connect.linux.do/api/user"
+LINUXDO_CLIENT_ID=""
+LINUXDO_CLIENT_SECRET=""
+# Fill this safely with: npm run security:key -- --local
+SESSION_ENCRYPTION_KEY=""
+DEV_LOGIN_ENABLED="true"
+MAX_MONITORS_PER_USER="3"
+MAX_REGISTERED_USERS="10"
+# Optional during migration: your LinuxDo user ID takes ownership of legacy monitors.
+LEGACY_OWNER_USER_ID=""
+ADMIN_USER_IDS=""
